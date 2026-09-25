@@ -88,7 +88,7 @@ struct ManageView: View {
         VStack(alignment: .leading, spacing: 4) {
             Text("渠道管理")
                 .font(.system(size: 22, weight: .bold, design: .rounded))
-            Text("渠道与显示设置，修改即时生效；也可直接编辑配置文件，程序会自动同步")
+            Text("渠道与显示设置保存在本地 SQLite；外部修改数据库后程序会自动同步")
                 .font(.system(size: 12))
                 .foregroundStyle(.tertiary)
         }
@@ -232,6 +232,24 @@ struct ManageView: View {
                         .labelsHidden()
                         .controlSize(.small)
                 }
+
+                Divider()
+
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 8) {
+                        settingLabel("本地存储", icon: "internaldrive")
+                        Spacer()
+                        BadgeTag(text: "SQLite", color: AnyShapeStyle(Color(nsColor: .controlAccentColor)))
+                    }
+                    Text(ConfigLoader.databaseFile.path)
+                        .font(.system(size: 9, design: .monospaced))
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Text("配置与鉴权分表存储 · credentials 独立保存 · 文件权限 600")
+                        .font(.system(size: 9))
+                        .foregroundStyle(.tertiary)
+                }
             }
             .padding(16)
             .cardBackground()
@@ -252,7 +270,7 @@ struct ManageView: View {
                 .lineLimit(1)
                 .transition(.opacity)
             } else {
-                Text("所有修改即时保存 · 配置文件外部编辑自动同步")
+                Text("所有修改即时保存 · SQLite 外部修改自动同步")
                     .font(.system(size: 10))
                     .foregroundStyle(.tertiary)
             }

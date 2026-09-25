@@ -17,7 +17,7 @@
   - 低额度系统通知（使用黄色阈值触发）
   - 自动刷新间隔切换（1/5/10/30 分钟）、立即刷新（⌘R）、退出
 - 正式 **.app 应用**（含图标），可添加到登录项开机自启
-- **管理窗口**：渠道增删改、颜色阈值拖动、菜单栏密度、低额度通知、登录项开关，全部与配置文件双向同步
+- **管理窗口**：渠道增删改、颜色阈值拖动、菜单栏密度、低额度通知、登录项开关，全部与本地 SQLite 双向同步
 
 ## 编译打包
 
@@ -28,10 +28,56 @@ cd ~/code/CodingPlanBar
 
 产物：`build/CodingPlanBar.app`（首次打包会自动生成图标）
 
-## 配置
+## 配置与鉴权存储
 
-配置文件：`~/.config/coding-plan-bar/config.json`
-（可用环境变量 `CODING_PLAN_BAR_CONFIG` 指定其他路径）
+主配置库：
+
+```text
+~/.config/coding-plan-bar/coding-plan-bar.sqlite
+```
+
+可用 `CODING_PLAN_BAR_DB` 指定其他 SQLite 文件。数据库固定使用 `0600` 权限，结构为：
+
+| 表 | 内容 |
+|---|---|
+| `settings` | 颜色阈值、菜单栏密度、通知、登录项等全局设置 |
+| `providers` | 渠道名称、类型、Base URL、endpoint、自定义 parser |
+| `credentials` | 每个渠道的 Token，按 `provider_id` 与渠道一对一关联 |
+
+管理窗口保存时会写 SQLite；外部用 `sqlite3` 修改数据库后，应用会自动热加载。鉴权信息单独放在 `credentials` 表里，普通渠道配置不混用 Token 字段。
+
+旧版 `config.json` 会在 SQLite 首次初始化且尚无渠道时自动导入。导入成功后，旧 JSON 会被替换为无 Token 的迁移标记，避免明文鉴权同时存在两份。
+
+```json
+{
+  "storage": "sqlite",
+  "database": "~/.config/coding-plan-bar/coding-plan-bar.sqlite",
+  "migrated_at": "2026-09-25T..."
+}
+```
+
+如果需要重新从 JSON 导入，先确认 `config.json` 是完整旧格式，再删除或换一个新的 `CODING_PLAN_BAR_DB` 路径后启动应用。
+
+### SQLite 配置示例
+
+查看结构（不会输出 Token）：
+
+```bash
+sqlite3 ~/.config/coding-plan-bar/coding-plan-bar.sqlite '.schema'
+```
+
+更新阈值：
+
+```bash
+sqlite3 ~/.config/coding-plan-bar/coding-plan-bar.sqlite \
+  "INSERT INTO settings(key,value,updated_at) VALUES('thresholds.green','50',strftime('%s','now')) ON CONFLICT(key) DO UPDATE SET value=excluded.value;"
+```
+
+新增或修改渠道建议通过管理窗口完成；直接写 `credentials` 表时务必避免把 Token 输出到终端或日志。
+
+### 旧 JSON 格式
+
+以下格式仅用于首次迁移导入，日常主存储是 SQLite。
 
 ```json
 {
@@ -110,7 +156,11 @@ Token 环境变量兜底：
 - GLM：`GLM_API_KEY` / `Z_AI_API_KEY` / `ZHIPU_API_KEY`
 - DeepSeek：`DEEPSEEK_API_KEY`
 
-建议权限：`chmod 600 ~/.config/coding-plan-bar/config.json`
+SQLite 文件权限由应用自动设为 `0600`。
+
+### 安全边界
+
+SQLite 让配置和鉴权有事务、外键和独立表结构，但数据库内的 Token 仍是明文。`0600` 权限能限制其他本地用户读取，不能防御同一用户下被入侵的进程。如果之后需要更强隔离，可以继续升级为 Keychain 或 SQLCipher。
 
 ## 运行
 
@@ -138,6 +188,7 @@ CodingPlanBar/
 ├── Scripts/make-icon.swift   # 程序化生成 App 图标
 └── Sources/CodingPlanBar/
     ├── Models.swift          # 配置、API 模型、解析
+    ├── ConfigDatabase.swift  # SQLite 配置与鉴权存储
     ├── Store.swift           # 状态管理与自动刷新
     ├── PanelView.swift       # SwiftUI 面板（卡片/进度条）
     ├── ManageView.swift      # 桌面渠道管理窗口

@@ -90,7 +90,7 @@ final class AppStore: ObservableObject {
     private var notificationCenterConfigured = false
     private var glmTrendFetchedAt: [String: Date] = [:]
 
-    // 配置文件监听（外部编辑 → 热加载）
+    // 配置数据库监听（外部修改 → 热加载）
     private var configSource: DispatchSourceFileSystemObject?
     private var lastConfigDigest = ""
     private var configReloadDebounce: DispatchWorkItem?
@@ -128,11 +128,11 @@ final class AppStore: ObservableObject {
         launchAtLogin = settings.launchAtLogin
     }
 
-    // MARK: 配置文件监听
+    // MARK: 配置数据库监听
 
-    /// 监听配置目录变化（原子写入会替换文件，监听目录更可靠），外部修改后热加载
+    /// 监听配置目录变化，外部修改 SQLite 后热加载
     private func startConfigWatch() {
-        let dir = ConfigLoader.configFile.deletingLastPathComponent()
+        let dir = ConfigLoader.databaseFile.deletingLastPathComponent()
         let fd = open(dir.path, O_EVTONLY)
         guard fd >= 0 else { return }
         let source = DispatchSource.makeFileSystemObjectSource(
@@ -149,15 +149,11 @@ final class AppStore: ObservableObject {
         lastConfigDigest = Self.configDigest
     }
 
-    /// 配置内容摘要（进程内一致，用于变化比较；写入后免重读直接计算）
-    private static func digest(of data: Data) -> String { "\(data.count)-\(data.hashValue)" }
-
     private static var configDigest: String {
-        guard let data = try? Data(contentsOf: ConfigLoader.configFile) else { return "" }
-        return digest(of: data)
+        ConfigDatabase.digest()
     }
 
-    /// 去抖 0.5s：过滤编辑器/原子写入产生的事件风暴；内容相同则忽略（防止自己保存触发循环）
+    /// 去抖 0.5s：过滤编辑器/SQLite 临时文件产生的事件风暴；内容相同则忽略（防止自己保存触发循环）
     private func scheduleConfigReload() {
         configReloadDebounce?.cancel()
         let work = DispatchWorkItem { [weak self] in
@@ -171,24 +167,17 @@ final class AppStore: ObservableObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: work)
     }
 
-    // MARK: 显示与系统集成设置（配置文件 <-> GUI 双向）
+    // MARK: 显示与系统集成设置（SQLite <-> GUI 双向）
 
-    private func updateConfigFile(transform: (inout [String: Any]) -> Void) throws {
-        var dict: [String: Any] = [:]
-        if let data = try? Data(contentsOf: ConfigLoader.configFile),
-           let existing = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-            dict = existing
-        }
-        transform(&dict)
-        let data = try JSONSerialization.data(withJSONObject: dict, options: [.prettyPrinted, .sortedKeys])
-        try data.write(to: ConfigLoader.configFile, options: .atomic)
-        lastConfigDigest = Self.digest(of: data)
+    private func updateConfigSetting(key: String, value: String) throws {
+        try ConfigDatabase.setValue(key: key, value: value)
+        lastConfigDigest = Self.configDigest
     }
 
     func setMenuBarMode(_ mode: MenuBarMode) {
         guard mode != menuBarMode else { return }
         do {
-            try updateConfigFile { $0["menu_bar_mode"] = mode.rawValue }
+            try updateConfigSetting(key: "menu_bar_mode", value: mode.rawValue)
             ConfigLoader.displaySettings.menuBarMode = mode
             menuBarMode = mode
             objectWillChange.send()
@@ -201,7 +190,7 @@ final class AppStore: ObservableObject {
     func setNotificationsEnabled(_ enabled: Bool) {
         guard enabled != notificationsEnabled else { return }
         do {
-            try updateConfigFile { $0["notifications_enabled"] = enabled }
+            try updateConfigSetting(key: "notifications_enabled", value: enabled ? "true" : "false")
             ConfigLoader.displaySettings.notificationsEnabled = enabled
             notificationsEnabled = enabled
             if enabled { configureNotifications(force: true) }
@@ -218,7 +207,7 @@ final class AppStore: ObservableObject {
             } else if SMAppService.mainApp.status == .enabled {
                 try SMAppService.mainApp.unregister()
             }
-            try updateConfigFile { $0["launch_at_login"] = enabled }
+            try updateConfigSetting(key: "launch_at_login", value: enabled ? "true" : "false")
             ConfigLoader.displaySettings.launchAtLogin = enabled
             launchAtLogin = enabled
         } catch {
@@ -480,7 +469,7 @@ final class AppStore: ObservableObject {
 
     // MARK: 配置管理（管理界面）
 
-    /// 从配置文件读取可编辑草稿
+    /// 从 SQLite 读取可编辑草稿
     func loadDrafts() -> [ProviderDraft] {
         guard let cfg = ConfigLoader.loadFileConfig() else { return [] }
         return (cfg.providers ?? []).map { p in
@@ -508,66 +497,57 @@ final class AppStore: ObservableObject {
         }
     }
 
-    /// 保存渠道列表与阈值到配置文件，并热重载
+    /// 保存渠道列表与阈值到 SQLite，并热重载
     /// - Parameter refreshData: 渠道列表变化时为 true（重新加载并刷新网络）；仅阈值变化时为 false（只重绘颜色）
     func saveConfig(drafts: [ProviderDraft], green: Int, yellow: Int, refreshData: Bool = true) throws {
-        var dict: [String: Any] = [:]
-        if let data = try? Data(contentsOf: ConfigLoader.configFile),
-           let existing = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-            dict = existing
-        }
-
         let (g, y) = F.normalizedThresholds(green: green, yellow: yellow)
-
-        dict["providers"] = drafts.map { d -> [String: Any] in
-            var entry: [String: Any] = [
-                "name": d.name,
-                "type": d.type,
-                "token": d.effectiveToken,
-            ]
-            if !d.icon.isEmpty { entry["icon"] = d.icon }
-            if d.type == "custom" {
-                entry["endpoint"] = d.endpoint
-                entry["auth_style"] = d.authStyle
-                var main: [String: Any] = ["label": "余额剩余"]
-                if !d.mainRemainingPath.isEmpty && !d.mainTotalPath.isEmpty {
-                    main["remaining_path"] = d.mainRemainingPath
-                    main["total_path"] = d.mainTotalPath
-                } else {
-                    main["path"] = d.mainPath
+        var providerConfigs: [ProviderConfig] = []
+        for draft in drafts {
+            var metrics: [CustomParser.MetricPath] = []
+            if draft.type == "custom" {
+                metrics.append(CustomParser.MetricPath(
+                    label: "余额剩余",
+                    path: draft.mainRemainingPath.isEmpty || draft.mainTotalPath.isEmpty ? draft.mainPath : nil,
+                    used: nil,
+                    resetPath: draft.mainResetPath.isEmpty ? nil : draft.mainResetPath,
+                    remainingPath: draft.mainRemainingPath.isEmpty ? nil : draft.mainRemainingPath,
+                    totalPath: draft.mainTotalPath.isEmpty ? nil : draft.mainTotalPath
+                ))
+                if !draft.extraPath.isEmpty || (!draft.extraRemainingPath.isEmpty && !draft.extraTotalPath.isEmpty) {
+                    metrics.append(CustomParser.MetricPath(
+                        label: "5h 窗口剩余",
+                        path: draft.extraRemainingPath.isEmpty || draft.extraTotalPath.isEmpty ? draft.extraPath : nil,
+                        used: nil,
+                        resetPath: draft.extraResetPath.isEmpty ? nil : draft.extraResetPath,
+                        remainingPath: draft.extraRemainingPath.isEmpty ? nil : draft.extraRemainingPath,
+                        totalPath: draft.extraTotalPath.isEmpty ? nil : draft.extraTotalPath
+                    ))
                 }
-                if !d.mainResetPath.isEmpty { main["reset_path"] = d.mainResetPath }
-                var metrics: [[String: Any]] = [main]
-                if !d.extraPath.isEmpty || (!d.extraRemainingPath.isEmpty && !d.extraTotalPath.isEmpty) {
-                    var m: [String: Any] = ["label": "5h 窗口剩余"]
-                    if !d.extraRemainingPath.isEmpty && !d.extraTotalPath.isEmpty {
-                        m["remaining_path"] = d.extraRemainingPath
-                        m["total_path"] = d.extraTotalPath
-                    } else {
-                        m["path"] = d.extraPath
-                    }
-                    if !d.extraResetPath.isEmpty { m["reset_path"] = d.extraResetPath }
-                    metrics.append(m)
-                }
-                entry["parser"] = ["metrics": metrics]
-            } else if !d.baseURL.isEmpty {
-                entry["base_url"] = d.baseURL
             }
-            return entry
+            providerConfigs.append(ProviderConfig(
+                name: draft.name,
+                type: draft.type,
+                token: draft.effectiveToken,
+                icon: draft.icon.isEmpty ? nil : draft.icon,
+                baseURL: draft.baseURL.isEmpty ? nil : draft.baseURL,
+                endpoint: draft.endpoint.isEmpty ? nil : draft.endpoint,
+                authStyle: draft.type == "custom" ? draft.authStyle : nil,
+                parser: draft.type == "custom" ? CustomParser(metrics: metrics) : nil
+            ))
         }
-        dict["thresholds"] = ["green": g, "yellow": y]
-        dict["menu_bar_mode"] = menuBarMode.rawValue
-        dict["notifications_enabled"] = notificationsEnabled
-        dict["launch_at_login"] = launchAtLogin
-        // 旧版单 provider 字段不再需要
-        dict.removeValue(forKey: "token")
-        dict.removeValue(forKey: "base_url")
-        dict.removeValue(forKey: "endpoint")
 
-        let data = try JSONSerialization.data(withJSONObject: dict, options: [.prettyPrinted, .sortedKeys])
-        try data.write(to: ConfigLoader.configFile, options: .atomic)
-        // 用内存中的 data 直接计算摘要，免去写入后的重读
-        lastConfigDigest = Self.digest(of: data)
+        let config = FileConfig(
+            providers: providerConfigs,
+            thresholds: .init(green: g, yellow: y),
+            token: nil,
+            baseURL: nil,
+            endpoint: nil,
+            menuBarMode: menuBarMode.rawValue,
+            notificationsEnabled: notificationsEnabled,
+            launchAtLogin: launchAtLogin
+        )
+        try ConfigDatabase.saveConfig(config)
+        lastConfigDigest = Self.configDigest
 
         F.greenThreshold = g
         F.yellowThreshold = y

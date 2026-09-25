@@ -3,8 +3,8 @@ import Foundation
 
 // MARK: - 配置模型
 
-struct CustomParser: Decodable {
-    struct MetricPath: Decodable {
+struct CustomParser: Codable {
+    struct MetricPath: Codable {
         let label: String
         let path: String?              // 百分比模式：取值路径（剩余百分比；used:true 表示已用需反转）
         let used: Bool?
@@ -69,7 +69,7 @@ struct FileConfig: Decodable {
     }
 }
 
-/// 菜单栏展示密度：配置文件与 GUI 共用
+/// 菜单栏展示密度：SQLite 与 GUI 共用
 enum MenuBarMode: String, CaseIterable {
     case ringPercent = "ring_percent"
     case ringOnly = "ring_only"
@@ -147,7 +147,7 @@ enum ProviderKind: String, CaseIterable {
         case .glm: return ["GLM_API_KEY", "Z_AI_API_KEY", "ZHIPU_API_KEY", "ANTHROPIC_AUTH_TOKEN"]
         case .kimi: return ["KIMI_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CODING_PLAN_BAR_TOKEN"]
         case .deepseek: return ["DEEPSEEK_API_KEY"]
-        case .custom: return []   // 自定义渠道只用配置文件 token：避免环境变量里的第三方 key 被发往任意域名
+        case .custom: return []   // 自定义渠道只用数据库 token：避免环境变量里的第三方 key 被发往任意域名
         }
     }
 
@@ -453,6 +453,7 @@ enum ISODate {
 
 enum ConfigLoader {
     static var displaySettings = DisplaySettings()
+    /// 旧版 JSON 配置：仅作为首次迁移来源和手动导入来源
     static var configFile: URL {
         if let custom = ProcessInfo.processInfo.environment["CODING_PLAN_BAR_CONFIG"] {
             return URL(fileURLWithPath: custom)
@@ -461,20 +462,41 @@ enum ConfigLoader {
             .appendingPathComponent(".config/coding-plan-bar/config.json")
     }
 
+    /// SQLite 主配置库。可用 CODING_PLAN_BAR_DB 覆盖，便于测试和便携使用。
+    static var databaseFile: URL {
+        if let custom = ProcessInfo.processInfo.environment["CODING_PLAN_BAR_DB"] {
+            return URL(fileURLWithPath: custom)
+        }
+        return configFile.deletingLastPathComponent().appendingPathComponent("coding-plan-bar.sqlite")
+    }
+
     static let decoder = JSONDecoder()
 
-    static func loadFileConfig() -> FileConfig? {
+    static func loadLegacyFileConfig() -> FileConfig? {
         guard let data = try? Data(contentsOf: configFile) else { return nil }
         return try? decoder.decode(FileConfig.self, from: data)
     }
 
+    /// 兼容既有调用：管理界面读取当前生效配置（SQLite）
+    static func loadFileConfig() -> FileConfig? {
+        try? ConfigDatabase.loadConfig()
+    }
+
     static func load() -> ConfigResult {
-        guard let cfg = loadFileConfig() else {
-            if FileManager.default.isReadableFile(atPath: configFile.path) {
-                return .failed("配置文件解析失败：\(configFile.path)")
+        let cfg: FileConfig
+        do {
+            cfg = try ConfigDatabase.loadConfig()
+        } catch {
+            if FileManager.default.isReadableFile(atPath: databaseFile.path) {
+                return .failed("配置数据库读取失败：\(databaseFile.path)\n\(error.localizedDescription)")
             }
-            return .failed("未找到配置文件 \(configFile.path)。请参照 README 配置 providers。")
+            return .failed("未找到配置数据库 \(databaseFile.path)。请先在管理窗口添加渠道，或放置旧版 config.json 后重启应用。")
         }
+        return load(cfg: cfg)
+    }
+
+    /// 将已加载配置转换为运行时对象；SQLite 与 JSON 导入共用同一套校验逻辑
+    static func load(cfg: FileConfig) -> ConfigResult {
 
         (F.greenThreshold, F.yellowThreshold) = F.normalizedThresholds(
             green: cfg.thresholds?.green ?? 50, yellow: cfg.thresholds?.yellow ?? 20
@@ -974,7 +996,7 @@ enum F {
         if interval < 3600 { return "\(Int(interval / 60)) 分钟前更新" }
         return "\(Int(interval / 3600)) 小时前更新"
     }
-    /// 颜色阈值（可由配置文件 thresholds 覆盖）：>green 绿，yellow...green 黄，<yellow 红
+    /// 颜色阈值（可由 SQLite thresholds 设置覆盖）：>green 绿，yellow...green 黄，<yellow 红
     static var greenThreshold = 50
     static var yellowThreshold = 20
 
