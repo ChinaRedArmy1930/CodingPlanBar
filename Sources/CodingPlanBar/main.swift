@@ -3,12 +3,14 @@ import SwiftUI
 
 // MARK: - App Delegate：菜单栏图标 + Popover 面板
 
-final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSPopoverDelegate {
     private var statusItem: NSStatusItem!
     private let store = AppStore()
     private let popover = NSPopover()
     private var appearanceObservation: NSKeyValueObservation?
     private var manageWindow: NSWindow?
+    private var localClickMonitor: Any?
+    private var globalClickMonitor: Any?
     /// 面板宿主只建一次；PanelView 观察 store，数据更新自动重绘
     private lazy var panelController = NSHostingController(
         rootView: PanelView(
@@ -20,9 +22,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Popover 面板（替代 NSMenu，不会被裁剪）
-        popover.behavior = .transient
+        // transient 在“常规应用 + 菜单栏 Popover”下会偶发不追踪外部点击；
+        // 改为 applicationDefined，由事件监听统一负责关闭。
+        popover.behavior = .applicationDefined
         popover.animates = true
         popover.contentViewController = panelController
+        popover.delegate = self
 
         // 菜单栏图标
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -47,19 +52,73 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     @objc private func togglePopover(_ sender: Any?) {
         guard let button = statusItem.button else { return }
         if popover.isShown {
-            popover.performClose(nil)
+            closePopover()
         } else {
-            // 必须先激活应用：否则 transient popover 不追踪外部点击，点桌面/其他应用不会自动关闭
+            // 激活应用，保证面板内按钮、文本选择和键盘交互稳定
             NSApp.activate(ignoringOtherApps: true)
             popover.contentSize = NSSize(width: 350, height: 640)
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .maxY)
+            installOutsideClickMonitors()
         }
+    }
+
+    // MARK: 外部点击关闭面板
+
+    /// 自己接管关闭逻辑：点击桌面、其他应用或本应用其他窗口时立即关闭。
+    private func installOutsideClickMonitors() {
+        removeOutsideClickMonitors()
+        let mask: NSEvent.EventTypeMask = [.leftMouseDown, .rightMouseDown, .otherMouseDown]
+
+        globalClickMonitor = NSEvent.addGlobalMonitorForEvents(matching: mask) { [weak self] _ in
+            self?.closePopover()
+        }
+
+        localClickMonitor = NSEvent.addLocalMonitorForEvents(matching: mask) { [weak self] event in
+            guard let self, self.popover.isShown else { return event }
+            if self.isEventInsidePopover(event) || self.isEventOnStatusButton(event) {
+                return event
+            }
+            self.closePopover()
+            return event
+        }
+    }
+
+    private func removeOutsideClickMonitors() {
+        if let monitor = localClickMonitor {
+            NSEvent.removeMonitor(monitor)
+            localClickMonitor = nil
+        }
+        if let monitor = globalClickMonitor {
+            NSEvent.removeMonitor(monitor)
+            globalClickMonitor = nil
+        }
+    }
+
+    private func closePopover() {
+        guard popover.isShown else { return }
+        popover.performClose(nil)
+    }
+
+    private func isEventInsidePopover(_ event: NSEvent) -> Bool {
+        guard let popoverWindow = panelController.view.window else { return false }
+        return event.window === popoverWindow
+    }
+
+    /// 状态栏按钮点击交给原有 action 处理，避免监听器先关闭、action 再打开。
+    private func isEventOnStatusButton(_ event: NSEvent) -> Bool {
+        guard let button = statusItem?.button,
+              event.window === button.window else { return false }
+        return button.bounds.contains(button.convert(event.locationInWindow, from: nil))
+    }
+
+    func popoverDidClose(_ notification: Notification) {
+        removeOutsideClickMonitors()
     }
 
     // MARK: 桌面管理窗口（CCSwitch 风格）
 
     private func showManageWindow(editProvider: String? = nil) {
-        popover.performClose(nil)
+        closePopover()
         if editProvider != nil, manageWindow != nil {
             // 需要直达指定渠道编辑时，重建窗口内容
             manageWindow?.close()
@@ -88,6 +147,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             showManageWindow()
         }
         return true
+    }
+
+    func applicationDidResignActive(_ notification: Notification) {
+        // 兜底：即使全局鼠标监听没有收到事件，切到其他应用时也关闭面板。
+        closePopover()
     }
 
     /// 标准应用菜单栏（关于 / 退出 / 窗口）
