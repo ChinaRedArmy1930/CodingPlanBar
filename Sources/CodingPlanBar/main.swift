@@ -163,41 +163,52 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 ]))
                 tooltipLines.append("\(p.name)：加载失败，点击查看详情")
             case .loaded(let s):
-                switch store.menuBarMode {
-                case .ringPercent:
-                    let ring = ringImage(remainingPct: s.remainingPct, innerPct: s.innerPct, size: 16)
-                    let attachment = NSTextAttachment()
-                    attachment.image = ring
-                    attachment.bounds = NSRect(x: 0, y: -3, width: 16, height: 16)
-                    text.append(NSAttributedString(attachment: attachment))
-                    text.append(NSAttributedString(string: " \(s.menuText)", attributes: [
+                if s.displayStyle == .balance {
+                    // API 余额没有百分比圆环，菜单栏直接显示图标 + 金额
+                    let amount = store.menuBarMode == .ringOnly ? p.icon : "\(p.icon) \(s.menuText)"
+                    text.append(NSAttributedString(string: amount, attributes: [
                         .font: TitleFont.loaded,
                         .foregroundColor: F.statusColor(remainingPct: s.remainingPct),
                     ]))
-                case .ringOnly:
-                    let ring = ringImage(remainingPct: s.remainingPct, innerPct: s.innerPct, size: 18)
-                    let attachment = NSTextAttachment()
-                    attachment.image = ring
-                    attachment.bounds = NSRect(x: 0, y: -4, width: 18, height: 18)
-                    text.append(NSAttributedString(attachment: attachment))
-                case .percentOnly:
-                    text.append(NSAttributedString(string: s.menuText, attributes: [
-                    .font: TitleFont.loaded,
-                    .foregroundColor: F.statusColor(remainingPct: s.remainingPct),
-                    ]))
-                    if let innerPct = s.innerPct {
-                        text.append(NSAttributedString(string: "·", attributes: [
-                            .font: TitleFont.plain,
-                            .foregroundColor: NSColor.tertiaryLabelColor,
-                        ]))
-                        text.append(NSAttributedString(string: "\(innerPct)%", attributes: [
+                    let extras = s.extraLines.isEmpty ? "" : " · " + s.extraLines.joined(separator: " · ")
+                    tooltipLines.append("\(p.name)：\(s.primaryLabel) \(s.menuText)\(extras)")
+                } else {
+                    switch store.menuBarMode {
+                    case .ringPercent:
+                        let ring = ringImage(remainingPct: s.remainingPct, innerPct: s.innerPct, size: 16)
+                        let attachment = NSTextAttachment()
+                        attachment.image = ring
+                        attachment.bounds = NSRect(x: 0, y: -3, width: 16, height: 16)
+                        text.append(NSAttributedString(attachment: attachment))
+                        text.append(NSAttributedString(string: " \(s.menuText)", attributes: [
                             .font: TitleFont.loaded,
-                            .foregroundColor: F.statusColor(remainingPct: innerPct),
+                            .foregroundColor: F.statusColor(remainingPct: s.remainingPct),
                         ]))
+                    case .ringOnly:
+                        let ring = ringImage(remainingPct: s.remainingPct, innerPct: s.innerPct, size: 18)
+                        let attachment = NSTextAttachment()
+                        attachment.image = ring
+                        attachment.bounds = NSRect(x: 0, y: -4, width: 18, height: 18)
+                        text.append(NSAttributedString(attachment: attachment))
+                    case .percentOnly:
+                        text.append(NSAttributedString(string: s.menuText, attributes: [
+                        .font: TitleFont.loaded,
+                        .foregroundColor: F.statusColor(remainingPct: s.remainingPct),
+                        ]))
+                        if let innerPct = s.innerPct {
+                            text.append(NSAttributedString(string: "·", attributes: [
+                                .font: TitleFont.plain,
+                                .foregroundColor: NSColor.tertiaryLabelColor,
+                            ]))
+                            text.append(NSAttributedString(string: "\(innerPct)%", attributes: [
+                                .font: TitleFont.loaded,
+                                .foregroundColor: F.statusColor(remainingPct: innerPct),
+                            ]))
+                        }
                     }
+                    let inner = s.innerSummary.map { " · \($0)" } ?? ""
+                    tooltipLines.append("\(p.name)：\(s.primaryLabel)剩余 \(s.menuText)\(inner)")
                 }
-                let inner = s.innerSummary.map { " · \($0)" } ?? ""
-                tooltipLines.append("\(p.name)：\(s.primaryLabel)剩余 \(s.menuText)\(inner)")
             }
         }
         button.attributedTitle = text

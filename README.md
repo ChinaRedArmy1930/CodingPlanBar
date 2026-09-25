@@ -1,14 +1,15 @@
 # Coding Plan Bar
 
-原生 macOS 菜单栏应用（Swift + AppKit + SwiftUI），多 Provider 可配置，实时展示 Coding Plan 剩余额度。内置支持 **Kimi** 与 **GLM（智谱 / Z.ai）**，也可通过 JSON 路径解析接入其他只读用量接口。
+原生 macOS 菜单栏应用（Swift + AppKit + SwiftUI），多 Provider 可配置，实时展示 Coding Plan 剩余额度和 API 账户余额。内置支持 **Kimi**、**GLM（智谱 / Z.ai）** 和 **DeepSeek API 余额**，也可通过 JSON 路径解析接入其他只读用量接口。
 
 ## 界面
 
 - **菜单栏**：每个 Provider 一个双圆环进度指示器 + 剩余百分比
-  - 外圈为周额度剩余，内圈为 5h 窗口剩余，两圈分别按绿/黄/红阈值着色
+  - 外圈为周额度剩余（描边圆环），内圈为 5h 窗口剩余（实心扇形），两者分别按绿/黄/红阈值着色
   - 支持三种密度：圆环+百分比 / 仅圆环 / 仅百分比
 - **点击图标**：弹出 CCSwitch 风格的面板（Popover）
   - Provider 卡片：圆环 + 大号剩余百分比 + 徽章（套餐等级）
+  - DeepSeek 等 API 余额渠道不显示百分比圆环，直接以金额展示账户余额，并列出充值与赠送余额
   - 指标进度条：周额度 / 5h 窗口 / Kimi 加油包 / MCP 月度
   - GLM 官方 24 小时 / 7 天消耗趋势
   - 重置时间与倒计时
@@ -51,6 +52,12 @@ cd ~/code/CodingPlanBar
       "icon": "✦"
     },
     {
+      "name": "DeepSeek",
+      "type": "deepseek",
+      "token": "sk-你的DeepSeekKey",
+      "icon": "🐳"
+    },
+    {
       "name": "Custom",
       "type": "custom",
       "endpoint": "https://api.example.com/v1/usage",
@@ -88,7 +95,7 @@ cd ~/code/CodingPlanBar
 | 字段 | 必填 | 说明 |
 |---|---|---|
 | `name` | 是 | 显示名称 |
-| `type` | 是 | `kimi` / `glm` / `custom` |
+| `type` | 是 | `kimi` / `glm` / `deepseek` / `custom` |
 | `token` | 是* | API Token（*也可用环境变量代替） |
 | `icon` | 否 | 加载/错误状态图标，默认 Kimi `⚡`、GLM `✦` |
 | `base_url` | 否 | 自定义服务地址（GLM 默认智谱，可改 `https://api.z.ai`） |
@@ -101,6 +108,7 @@ cd ~/code/CodingPlanBar
 Token 环境变量兜底：
 - Kimi：`KIMI_API_KEY` / `ANTHROPIC_AUTH_TOKEN`
 - GLM：`GLM_API_KEY` / `Z_AI_API_KEY` / `ZHIPU_API_KEY`
+- DeepSeek：`DEEPSEEK_API_KEY`
 
 建议权限：`chmod 600 ~/.config/coding-plan-bar/config.json`
 
@@ -140,5 +148,6 @@ CodingPlanBar/
 
 - Kimi：`GET https://api.kimi.com/coding/v1/usages`
 - GLM：`GET https://open.bigmodel.cn/api/monitor/usage/quota/limit`
+- DeepSeek：`GET https://api.deepseek.com/user/balance`（开放平台 API 余额，不是 Coding Plan）
 
 均为官方只读用量接口，不消耗额度。

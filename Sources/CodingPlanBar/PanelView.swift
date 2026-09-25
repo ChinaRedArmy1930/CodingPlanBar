@@ -240,11 +240,18 @@ struct ProviderCard: View {
 
     private func cardHeader(_ snapshot: ProviderSnapshot) -> some View {
         HStack(spacing: 10) {
-            Image(nsImage: ringImage(
-                remainingPct: snapshot.remainingPct,
-                innerPct: snapshot.innerPct,
-                size: 22
-            ))
+            if snapshot.displayStyle == .balance {
+                Image(systemName: snapshot.menuText.hasPrefix("$") ? "dollarsign.circle.fill" : "yensign.circle.fill")
+                    .font(.system(size: 20))
+                    .foregroundStyle(Color(nsColor: F.statusColor(remainingPct: snapshot.remainingPct)))
+                    .frame(width: 22, height: 22)
+            } else {
+                Image(nsImage: ringImage(
+                    remainingPct: snapshot.remainingPct,
+                    innerPct: snapshot.innerPct,
+                    size: 22
+                ))
+            }
             VStack(alignment: .leading, spacing: 2) {
                 Text(provider.name)
                     .font(.system(size: 13, weight: .semibold))
@@ -258,7 +265,7 @@ struct ProviderCard: View {
                     .font(.system(size: 22, weight: .bold, design: .rounded))
                     .monospacedDigit()
                     .foregroundStyle(Color(nsColor: F.statusColor(remainingPct: snapshot.remainingPct)))
-                Text("\(snapshot.primaryLabel)剩余")
+                Text(snapshot.displayStyle == .balance ? snapshot.primaryLabel : "\(snapshot.primaryLabel)剩余")
                     .font(.system(size: 9))
                     .foregroundStyle(.tertiary)
             }

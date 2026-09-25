@@ -417,6 +417,8 @@ struct TypeIcon: View {
         switch kind {
         case .glm:
             return [Color(red: 0.05, green: 0.65, blue: 0.62), Color(red: 0.12, green: 0.82, blue: 0.72)]
+        case .deepseek:
+            return [Color(red: 0.16, green: 0.42, blue: 0.95), Color(red: 0.35, green: 0.62, blue: 1.0)]
         case .custom:
             return [Color(red: 0.42, green: 0.45, blue: 0.52), Color(red: 0.55, green: 0.58, blue: 0.66)]
         case .kimi:
@@ -427,6 +429,7 @@ struct TypeIcon: View {
     private var symbol: String {
         switch kind {
         case .glm: return "sparkles"
+        case .deepseek: return "water.waves"
         case .custom: return "circle.hexagongrid"
         case .kimi: return "bolt.fill"
         }
@@ -590,7 +593,7 @@ struct ProviderForm: View {
                                 }
                                 .labelsHidden()
                                 .pickerStyle(.segmented)
-                                .frame(maxWidth: 240)
+                                .frame(maxWidth: 300)
                             } else {
                                 HStack(spacing: 8) {
                                     TypeIcon(kind: draft.kind ?? .kimi, size: 22)
@@ -673,6 +676,13 @@ struct ProviderForm: View {
                             }
                         }
 
+                        if draft.type == "deepseek" {
+                            Text("DeepSeek 读的是开放平台 API 余额（/user/balance），不是 Coding Plan 百分比额度。")
+                                .font(.system(size: 9))
+                                .foregroundStyle(.tertiary)
+                                .padding(.leading, 84)
+                        }
+
                         // 实际调用预览
                         fieldRow(icon: "arrow.right.circle", title: "调用") {
                             VStack(alignment: .leading, spacing: 3) {
@@ -710,7 +720,7 @@ struct ProviderForm: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(isNew ? "添加渠道" : "编辑渠道")
                         .font(.system(size: 20, weight: .bold, design: .rounded))
-                    Text(isNew ? "接入一个新的 Coding Plan" : draft.name.isEmpty ? "配置渠道信息" : draft.name)
+                    Text(isNew ? "接入一个新的套餐或 API 渠道" : draft.name.isEmpty ? "配置渠道信息" : draft.name)
                         .font(.system(size: 11))
                         .foregroundStyle(.tertiary)
                         .lineLimit(1)

@@ -99,7 +99,7 @@ struct DisplaySettings {
 
 /// 各渠道类型的展示名 / 默认值 / 认证规则集中于此；type 字符串在 ConfigLoader 边界解析一次
 enum ProviderKind: String, CaseIterable {
-    case kimi, glm, custom
+    case kimi, glm, deepseek, custom
 
     init?(rawType: String) { self.init(rawValue: rawType.lowercased()) }
 
@@ -108,6 +108,7 @@ enum ProviderKind: String, CaseIterable {
         switch self {
         case .kimi: return "Kimi · Moonshot"
         case .glm: return "GLM · 智谱"
+        case .deepseek: return "DeepSeek · API"
         case .custom: return "自定义渠道"
         }
     }
@@ -117,6 +118,7 @@ enum ProviderKind: String, CaseIterable {
         switch self {
         case .kimi: return "Kimi"
         case .glm: return "GLM"
+        case .deepseek: return "DeepSeek"
         case .custom: return "自定义"
         }
     }
@@ -126,6 +128,7 @@ enum ProviderKind: String, CaseIterable {
         switch self {
         case .kimi: return "⚡"
         case .glm: return "✦"
+        case .deepseek: return "🐳"
         case .custom: return "◈"
         }
     }
@@ -133,6 +136,7 @@ enum ProviderKind: String, CaseIterable {
     var defaultBaseURL: String {
         switch self {
         case .glm: return "https://open.bigmodel.cn"
+        case .deepseek: return "https://api.deepseek.com"
         default: return "https://api.kimi.com"
         }
     }
@@ -142,6 +146,7 @@ enum ProviderKind: String, CaseIterable {
         switch self {
         case .glm: return ["GLM_API_KEY", "Z_AI_API_KEY", "ZHIPU_API_KEY", "ANTHROPIC_AUTH_TOKEN"]
         case .kimi: return ["KIMI_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CODING_PLAN_BAR_TOKEN"]
+        case .deepseek: return ["DEEPSEEK_API_KEY"]
         case .custom: return []   // 自定义渠道只用配置文件 token：避免环境变量里的第三方 key 被发往任意域名
         }
     }
@@ -151,7 +156,7 @@ enum ProviderKind: String, CaseIterable {
         switch self {
         case .custom: return (configured ?? "bearer").lowercased()
         case .glm: return "raw"
-        case .kimi: return "bearer"
+        case .kimi, .deepseek: return "bearer"
         }
     }
 }
@@ -183,6 +188,12 @@ enum ProviderState {
     case failed(String)
 }
 
+/// 展示口径：Coding Plan 用百分比额度，API 渠道用金额余额
+enum SnapshotDisplayStyle {
+    case quota
+    case balance
+}
+
 /// 结构化快照，供 UI 渲染
 struct ProviderSnapshot {
     struct Metric: Identifiable {
@@ -201,6 +212,7 @@ struct ProviderSnapshot {
     let metrics: [Metric]
     let extraLines: [String]       // 附加说明（如 MCP 明细）
     let fetchedAt: Date
+    var displayStyle: SnapshotDisplayStyle = .quota
 }
 
 extension ProviderSnapshot {
@@ -243,6 +255,7 @@ extension ProviderRuntime {
     func snapshot(from data: Data) -> ProviderSnapshot? {
         switch kind {
         case .glm: return SnapshotBuilder.glm(from: data)
+        case .deepseek: return SnapshotBuilder.deepseek(from: data)
         case .custom: return parser.flatMap { SnapshotBuilder.custom(parser: $0, data: data) }
         default: return SnapshotBuilder.kimi(from: data)
         }
@@ -284,6 +297,31 @@ struct KimiResponse: Decodable {
     enum CodingKeys: String, CodingKey {
         case usage, usages
         case boosterWallet = "booster_wallet"
+    }
+}
+
+/// DeepSeek 开放平台余额：`GET /user/balance`
+struct DeepSeekBalanceResponse: Decodable {
+    struct BalanceInfo: Decodable {
+        let currency: String?
+        let totalBalance: String?
+        let grantedBalance: String?
+        let toppedUpBalance: String?
+
+        enum CodingKeys: String, CodingKey {
+            case currency
+            case totalBalance = "total_balance"
+            case grantedBalance = "granted_balance"
+            case toppedUpBalance = "topped_up_balance"
+        }
+    }
+
+    let isAvailable: Bool?
+    let balanceInfos: [BalanceInfo]?
+
+    enum CodingKeys: String, CodingKey {
+        case isAvailable = "is_available"
+        case balanceInfos = "balance_infos"
     }
 }
 
@@ -520,9 +558,17 @@ enum ConfigLoader {
             return URL(string: ep)
         }
         if let ep = endpoint, let url = URL(string: ep) { return url }
-        let base = baseURL ?? ProviderKind.kimi.defaultBaseURL
+        let configuredBase = baseURL.flatMap { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0 }
+        let base = configuredBase ?? kind?.defaultBaseURL ?? ProviderKind.kimi.defaultBaseURL
         if kind == .glm {
             return URL(string: base + "/api/monitor/usage/quota/limit")
+        }
+        if kind == .deepseek {
+            var s = base.trimmingCharacters(in: .whitespacesAndNewlines)
+            while s.hasSuffix("/") { s.removeLast() }
+            if s.hasSuffix("/v1") { s.removeLast(3) }
+            if s.hasSuffix("/user/balance") { return URL(string: s) }
+            return URL(string: s + "/user/balance")
         }
         var s = base
         if s.hasSuffix("/coding/v1") { s += "/usages" }
@@ -607,6 +653,45 @@ enum SnapshotBuilder {
             metrics: metrics,
             extraLines: boosterLine.map { [$0] } ?? [],
             fetchedAt: Date()
+        )
+    }
+
+    /// DeepSeek 开放平台：余额是金额而非百分比，单独走 `.balance` 展示口径
+    static func deepseek(from data: Data) -> ProviderSnapshot? {
+        guard let decoded = try? decoder.decode(DeepSeekBalanceResponse.self, from: data),
+              let infos = decoded.balanceInfos, !infos.isEmpty else { return nil }
+
+        let primaryIndex = infos.firstIndex { $0.currency == "CNY" } ?? 0
+        let primary = infos[primaryIndex]
+        guard let totalText = primary.totalBalance else { return nil }
+
+        var extras: [String] = []
+        var parts: [String] = []
+        if let toppedUp = primary.toppedUpBalance, (Double(toppedUp) ?? 0) > 0 {
+            parts.append("充值 \(F.moneyAmount(toppedUp, currency: primary.currency))")
+        }
+        if let granted = primary.grantedBalance, (Double(granted) ?? 0) > 0 {
+            parts.append("赠送 \(F.moneyAmount(granted, currency: primary.currency))")
+        }
+        if !parts.isEmpty { extras.append(parts.joined(separator: " · ")) }
+
+        for (index, info) in infos.enumerated() where index != primaryIndex {
+            guard let total = info.totalBalance else { continue }
+            extras.append("\(info.currency ?? "其他") 余额 \(F.moneyAmount(total, currency: info.currency))")
+        }
+        if decoded.isAvailable == false {
+            extras.append("账户余额不可用，请检查充值状态")
+        }
+
+        return ProviderSnapshot(
+            remainingPct: decoded.isAvailable == false ? 0 : nil,
+            menuText: F.moneyAmount(totalText, currency: primary.currency),
+            primaryLabel: "API 余额",
+            badge: "DeepSeek API",
+            metrics: [],
+            extraLines: extras,
+            fetchedAt: Date(),
+            displayStyle: .balance
         )
     }
 
@@ -852,6 +937,11 @@ enum F {
         default: return "\(amount) \(currency ?? "")".trimmingCharacters(in: .whitespaces)
         }
     }
+    /// 金额字符串（DeepSeek 等接口直接返回元，如 "110.00"）
+    static func moneyAmount(_ text: String, currency: String?) -> String {
+        guard let value = Double(text) else { return "\(text) \(currency ?? "")".trimmingCharacters(in: .whitespaces) }
+        return money(cents: value * 100, currency: currency)
+    }
     /// 紧凑金额：整数省略小数（¥100.00 → ¥100），用于空间受限的指标行
     static func moneyShort(cents: Double, currency: String?) -> String {
         let amount = cents / 100
@@ -903,7 +993,7 @@ enum F {
 }
 
 /// 圆环进度图标（菜单栏与面板共用）：
-/// 外圈 = 周额度剩余，内圈 = 5h 窗口剩余；两圈分别按阈值着色
+/// 外圈 = 周额度剩余（描边圆环），内圈 = 5h 窗口剩余（实心扇形）；两者分别按阈值着色
 func ringImage(remainingPct: Int?, innerPct: Int? = nil, size: CGFloat) -> NSImage {
     let img = NSImage(size: NSSize(width: size, height: size))
     img.lockFocus()
@@ -912,8 +1002,7 @@ func ringImage(remainingPct: Int?, innerPct: Int? = nil, size: CGFloat) -> NSIma
     let center = NSPoint(x: rect.midX, y: rect.midY)
     let radius = rect.width / 2
     let outerWidth = max(1.7, size * 0.115)
-    let innerWidth = max(1.3, size * 0.085)
-    let innerRadius = max(1.0, radius - outerWidth - innerWidth * 0.75)
+    let innerRadius = max(1.0, radius - outerWidth - max(0.8, size * 0.05))
 
     func strokeArc(radius: CGFloat, lineWidth: CGFloat, pct: Int?, color: NSColor?) {
         let track = NSBezierPath()
@@ -938,13 +1027,30 @@ func ringImage(remainingPct: Int?, innerPct: Int? = nil, size: CGFloat) -> NSIma
         pct: remainingPct,
         color: F.statusColor(remainingPct: remainingPct)
     )
-    if innerPct != nil {
-        strokeArc(
-            radius: innerRadius,
-            lineWidth: innerWidth,
-            pct: innerPct,
-            color: F.statusColor(remainingPct: innerPct)
+    if let innerPct {
+        let diskRect = NSRect(
+            x: center.x - innerRadius,
+            y: center.y - innerRadius,
+            width: innerRadius * 2,
+            height: innerRadius * 2
         )
+        let disk = NSBezierPath(ovalIn: diskRect)
+        NSColor.separatorColor.withAlphaComponent(0.55).setFill()
+        disk.fill()
+
+        let clamped = min(max(innerPct, 0), 100)
+        if clamped >= 100 {
+            F.statusColor(remainingPct: clamped).setFill()
+            disk.fill()
+        } else if clamped > 0 {
+            let sweep = 360.0 * CGFloat(clamped) / 100.0
+            let wedge = NSBezierPath()
+            wedge.move(to: center)
+            wedge.appendArc(withCenter: center, radius: innerRadius, startAngle: 90, endAngle: 90 - sweep, clockwise: true)
+            wedge.close()
+            F.statusColor(remainingPct: clamped).setFill()
+            wedge.fill()
+        }
     }
 
     img.unlockFocus()

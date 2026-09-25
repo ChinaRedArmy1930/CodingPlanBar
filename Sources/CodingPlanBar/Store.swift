@@ -615,7 +615,8 @@ func runOnce() -> Int32 {
                 if let http = response as? HTTPURLResponse { print("HTTP \(http.statusCode)") }
                 if let data {
                     if let snapshot = p.snapshot(from: data) {
-                        print("菜单栏：\(p.icon) \(snapshot.menuText)（\(snapshot.primaryLabel)剩余）")
+                        let suffix = snapshot.displayStyle == .balance ? "" : "剩余"
+                        print("菜单栏：\(p.icon) \(snapshot.menuText)（\(snapshot.primaryLabel)\(suffix)）")
                         for m in snapshot.metrics {
                             let reset = m.resetDate.map { " · " + F.resetCaption($0) } ?? ""
                             print("  \(m.label)：\(m.valueText)\(reset)")
