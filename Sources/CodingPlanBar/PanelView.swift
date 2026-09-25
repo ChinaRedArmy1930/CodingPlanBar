@@ -240,7 +240,11 @@ struct ProviderCard: View {
 
     private func cardHeader(_ snapshot: ProviderSnapshot) -> some View {
         HStack(spacing: 10) {
-            Image(nsImage: ringImage(remainingPct: snapshot.remainingPct, size: 22))
+            Image(nsImage: ringImage(
+                remainingPct: snapshot.remainingPct,
+                innerPct: snapshot.innerPct,
+                size: 22
+            ))
             VStack(alignment: .leading, spacing: 2) {
                 Text(provider.name)
                     .font(.system(size: 13, weight: .semibold))

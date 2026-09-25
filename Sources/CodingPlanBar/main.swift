@@ -165,7 +165,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             case .loaded(let s):
                 switch store.menuBarMode {
                 case .ringPercent:
-                    let ring = ringImage(remainingPct: s.remainingPct, size: 16)
+                    let ring = ringImage(remainingPct: s.remainingPct, innerPct: s.innerPct, size: 16)
                     let attachment = NSTextAttachment()
                     attachment.image = ring
                     attachment.bounds = NSRect(x: 0, y: -3, width: 16, height: 16)
@@ -175,7 +175,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                         .foregroundColor: F.statusColor(remainingPct: s.remainingPct),
                     ]))
                 case .ringOnly:
-                    let ring = ringImage(remainingPct: s.remainingPct, size: 18)
+                    let ring = ringImage(remainingPct: s.remainingPct, innerPct: s.innerPct, size: 18)
                     let attachment = NSTextAttachment()
                     attachment.image = ring
                     attachment.bounds = NSRect(x: 0, y: -4, width: 18, height: 18)
@@ -185,8 +185,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     .font: TitleFont.loaded,
                     .foregroundColor: F.statusColor(remainingPct: s.remainingPct),
                     ]))
+                    if let innerPct = s.innerPct {
+                        text.append(NSAttributedString(string: "·", attributes: [
+                            .font: TitleFont.plain,
+                            .foregroundColor: NSColor.tertiaryLabelColor,
+                        ]))
+                        text.append(NSAttributedString(string: "\(innerPct)%", attributes: [
+                            .font: TitleFont.loaded,
+                            .foregroundColor: F.statusColor(remainingPct: innerPct),
+                        ]))
+                    }
                 }
-                tooltipLines.append("\(p.name)：\(s.primaryLabel)剩余 \(s.menuText)")
+                let inner = s.innerSummary.map { " · \($0)" } ?? ""
+                tooltipLines.append("\(p.name)：\(s.primaryLabel)剩余 \(s.menuText)\(inner)")
             }
         }
         button.attributedTitle = text

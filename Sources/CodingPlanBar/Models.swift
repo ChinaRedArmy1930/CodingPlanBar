@@ -203,6 +203,28 @@ struct ProviderSnapshot {
     let fetchedAt: Date
 }
 
+extension ProviderSnapshot {
+    /// 第二个指标约定为短周期窗口（Kimi / GLM 均为 5h），用于菜单栏内圈
+    var innerMetric: Metric? {
+        if let fiveHour = metrics.first(where: { metric in
+            let label = metric.label.lowercased()
+            return label.contains("5h") || label.contains("5 小时") || label.contains("5小时")
+        }) {
+            return fiveHour
+        }
+        // 自定义渠道未必把第二指标命名为 5h；只接受百分比指标，避免把加油包/MCP 计数误当内圈
+        return metrics.dropFirst().first { $0.valueText.contains("%") }
+    }
+
+    var innerPct: Int? { innerMetric?.remainingPct }
+
+    /// 菜单栏 tooltip / 面板共用的 5h 描述；没有短周期指标时为 nil
+    var innerSummary: String? {
+        guard let metric = innerMetric else { return nil }
+        return "\(metric.label) \(metric.remainingPct)%"
+    }
+}
+
 extension ProviderRuntime {
     /// 构造请求（含认证头）；App 内刷新与 CLI --once 共用
     func urlRequest() -> URLRequest {
@@ -880,32 +902,51 @@ enum F {
     }
 }
 
-/// 圆环进度图标（菜单栏与面板共用）
-func ringImage(remainingPct: Int?, size: CGFloat) -> NSImage {
-    let pct = remainingPct ?? 100
+/// 圆环进度图标（菜单栏与面板共用）：
+/// 外圈 = 周额度剩余，内圈 = 5h 窗口剩余；两圈分别按阈值着色
+func ringImage(remainingPct: Int?, innerPct: Int? = nil, size: CGFloat) -> NSImage {
     let img = NSImage(size: NSSize(width: size, height: size))
     img.lockFocus()
-    let inset: CGFloat = max(1.6, size * 0.13)
+    let inset: CGFloat = max(1.2, size * 0.10)
     let rect = NSRect(x: inset, y: inset, width: size - inset * 2, height: size - inset * 2)
     let center = NSPoint(x: rect.midX, y: rect.midY)
     let radius = rect.width / 2
-    let lineWidth = max(2.0, size * 0.16)
+    let outerWidth = max(1.7, size * 0.115)
+    let innerWidth = max(1.3, size * 0.085)
+    let innerRadius = max(1.0, radius - outerWidth - innerWidth * 0.75)
 
-    let track = NSBezierPath()
-    track.appendArc(withCenter: center, radius: radius, startAngle: 0, endAngle: 360, clockwise: false)
-    track.lineWidth = lineWidth
-    NSColor.separatorColor.setStroke()
-    track.stroke()
+    func strokeArc(radius: CGFloat, lineWidth: CGFloat, pct: Int?, color: NSColor?) {
+        let track = NSBezierPath()
+        track.appendArc(withCenter: center, radius: radius, startAngle: 0, endAngle: 360, clockwise: false)
+        track.lineWidth = lineWidth
+        NSColor.separatorColor.withAlphaComponent(0.55).setStroke()
+        track.stroke()
 
-    if pct > 0 {
-        let sweep = 360.0 * CGFloat(pct) / 100.0
+        guard let pct, pct > 0 else { return }
+        let sweep = 360.0 * CGFloat(min(max(pct, 0), 100)) / 100.0
         let arc = NSBezierPath()
         arc.appendArc(withCenter: center, radius: radius, startAngle: 90, endAngle: 90 - sweep, clockwise: true)
         arc.lineWidth = lineWidth
         arc.lineCapStyle = .round
-        F.statusColor(remainingPct: pct).setStroke()
+        (color ?? F.statusColor(remainingPct: pct)).setStroke()
         arc.stroke()
     }
+
+    strokeArc(
+        radius: radius,
+        lineWidth: outerWidth,
+        pct: remainingPct,
+        color: F.statusColor(remainingPct: remainingPct)
+    )
+    if innerPct != nil {
+        strokeArc(
+            radius: innerRadius,
+            lineWidth: innerWidth,
+            pct: innerPct,
+            color: F.statusColor(remainingPct: innerPct)
+        )
+    }
+
     img.unlockFocus()
     return img
 }
