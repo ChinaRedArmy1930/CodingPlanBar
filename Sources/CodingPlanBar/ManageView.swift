@@ -14,6 +14,7 @@ struct ManageView: View {
     @State private var pendingDelete: ProviderDraft?
     @State private var statusMessage: String?
     @State private var statusIsError = false
+    @State private var configLoadError: String?
 
     var body: some View {
         Group {
@@ -55,16 +56,44 @@ struct ManageView: View {
     }
 
     private func load() {
-        drafts = store.loadDrafts()
-        let t = store.currentThresholds
-        greenThreshold = t.green
-        yellowThreshold = t.yellow
-        // 从"添加 Token"按钮进入时，直接打开对应渠道的编辑表单
-        if let name = initialEditName {
-            if let d = drafts.first(where: { $0.name == name }) {
-                form = (draft: d, isNew: false)
+        do {
+            let loaded = try store.loadDrafts()
+            configLoadError = nil
+            drafts = loaded
+            let t = store.currentThresholds
+            greenThreshold = t.green
+            yellowThreshold = t.yellow
+            // 从"添加 Token"按钮进入时，直接打开对应渠道的编辑表单
+            if let name = initialEditName {
+                if let d = drafts.first(where: { $0.name == name }) {
+                    form = (draft: d, isNew: false)
+                }
             }
+        } catch {
+            configLoadError = error.localizedDescription
+            showStatus("配置读取失败：\(error.localizedDescription)", error: true)
         }
+    }
+
+    private func configErrorCard(_ message: String) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.red)
+                Text("配置读取失败")
+                    .font(.system(size: 13, weight: .semibold))
+            }
+            Text(message)
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
+            Text("已暂停保存操作，避免把读取失败误当作空配置后清空渠道。")
+                .font(.system(size: 10))
+                .foregroundStyle(.tertiary)
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .cardBackground(cornerRadius: 12)
     }
 
     // MARK: 主内容
@@ -74,8 +103,12 @@ struct ManageView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
                     header
-                    providerSection
-                    settingsSection
+                    if let configLoadError {
+                        configErrorCard(configLoadError)
+                    } else {
+                        providerSection
+                        settingsSection
+                    }
                 }
                 .padding(24)
             }
@@ -325,6 +358,10 @@ struct ManageView: View {
     // MARK: 即时保存
 
     private func commit(refreshData: Bool) {
+        if configLoadError != nil {
+            showStatus("配置读取失败，已暂停保存", error: true)
+            return
+        }
         let names = drafts.map { $0.name.trimmingCharacters(in: .whitespaces) }
         if names.contains(where: { $0.isEmpty }) {
             showStatus("渠道名称不能为空", error: true)

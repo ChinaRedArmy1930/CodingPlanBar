@@ -477,11 +477,6 @@ enum ConfigLoader {
         return try? decoder.decode(FileConfig.self, from: data)
     }
 
-    /// 兼容既有调用：管理界面读取当前生效配置（SQLite）
-    static func loadFileConfig() -> FileConfig? {
-        try? ConfigDatabase.loadConfig()
-    }
-
     static func load() -> ConfigResult {
         let cfg: FileConfig
         do {

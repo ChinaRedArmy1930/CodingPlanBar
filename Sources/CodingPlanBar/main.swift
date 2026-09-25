@@ -11,6 +11,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSPo
     private var manageWindow: NSWindow?
     private var localClickMonitor: Any?
     private var globalClickMonitor: Any?
+    private var localKeyMonitor: Any?
     /// 面板宿主只建一次；PanelView 观察 store，数据更新自动重绘
     private lazy var panelController = NSHostingController(
         rootView: PanelView(
@@ -81,9 +82,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSPo
             self.closePopover()
             return event
         }
+
+        localKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self, self.popover.isShown, event.keyCode == 53 else { return event }
+            self.closePopover()
+            return nil
+        }
     }
 
     private func removeOutsideClickMonitors() {
+        if let monitor = localKeyMonitor {
+            NSEvent.removeMonitor(monitor)
+            localKeyMonitor = nil
+        }
         if let monitor = localClickMonitor {
             NSEvent.removeMonitor(monitor)
             localClickMonitor = nil

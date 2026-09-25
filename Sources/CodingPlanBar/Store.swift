@@ -469,9 +469,9 @@ final class AppStore: ObservableObject {
 
     // MARK: 配置管理（管理界面）
 
-    /// 从 SQLite 读取可编辑草稿
-    func loadDrafts() -> [ProviderDraft] {
-        guard let cfg = ConfigLoader.loadFileConfig() else { return [] }
+    /// 从 SQLite 读取可编辑草稿。读取失败必须向上抛出，调用方绝不能再基于空列表保存。
+    func loadDrafts() throws -> [ProviderDraft] {
+        let cfg = try ConfigDatabase.loadConfig()
         return (cfg.providers ?? []).map { p in
             var d = ProviderDraft(
                 name: p.name, type: p.type.lowercased(),
