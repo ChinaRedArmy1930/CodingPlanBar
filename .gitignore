@@ -1,0 +1,9 @@
+.DS_Store
+.build/
+build/
+.claude/
+
+# Local logs and editor files
+*.log
+*.xcuserstate
+*.swp
