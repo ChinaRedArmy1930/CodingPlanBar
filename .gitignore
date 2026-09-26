@@ -3,6 +3,15 @@
 build/
 .claude/
 
+# Local configuration, credentials, and usage history
+*.sqlite
+*.sqlite3
+*.sqlite-wal
+*.sqlite-shm
+history.json
+config.json
+config.json.*
+
 # Local logs and editor files
 *.log
 *.xcuserstate

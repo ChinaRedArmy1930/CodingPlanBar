@@ -2,6 +2,18 @@
 
 原生 macOS 菜单栏应用（Swift + AppKit + SwiftUI），多 Provider 可配置，实时展示 Coding Plan 剩余额度和 API 账户余额。内置支持 **Kimi**、**GLM（智谱 / Z.ai）** 和 **DeepSeek API 余额**，也可通过 JSON 路径解析接入其他只读用量接口。
 
+## 系统要求
+
+- macOS 13.0 或更高版本
+- Xcode Command Line Tools
+
+检查工具链：
+
+```bash
+xcode-select -p
+swift --version
+```
+
 ## 界面
 
 - **菜单栏**：每个 Provider 一个双圆环进度指示器 + 剩余百分比
@@ -20,14 +32,29 @@
 - 正式 **.app 应用**（含图标），可添加到登录项开机自启
 - **管理窗口**：渠道增删改、颜色阈值拖动、菜单栏密度、低额度通知、重置前提醒、登录项开关，全部与本地 SQLite 双向同步
 
-## 编译打包
+## 从源码构建
 
 ```bash
-cd ~/code/CodingPlanBar
+git clone https://github.com/<owner>/CodingPlanBar.git
+cd CodingPlanBar
 ./build-app.sh
 ```
 
 产物：`build/CodingPlanBar.app`（首次打包会自动生成图标）
+
+运行测试：
+
+```bash
+swift test
+```
+
+只编译 release 可执行文件：
+
+```bash
+swift build -c release
+```
+
+当前仓库提供的是源码构建流程。`build-app.sh` 生成的 `.app` 未包含 Developer ID 签名和 notarization；如果你分发给其他用户，macOS Gatekeeper 可能要求右键打开或本地构建。
 
 ## 配置与鉴权存储
 
@@ -45,7 +72,7 @@ cd ~/code/CodingPlanBar
 | `providers` | 渠道名称、类型、Base URL、endpoint、自定义 parser |
 | `credentials` | 每个渠道的 Token，按 `provider_id` 与渠道一对一关联 |
 
-管理窗口保存时会写 SQLite；外部用 `sqlite3` 修改数据库后，应用会自动热加载。鉴权信息单独放在 `credentials` 表里，普通渠道配置不混用 Token 字段。
+管理窗口保存时会写 SQLite。应用会监听配置目录并使用数据库摘要热加载外部修改；应用自身的连接使用 rollback journal，常见 `sqlite3` 修改可以自动同步。如果外部工具长时间使用 WAL 模式，修改停留在 `-wal` 文件时热加载不保证立即触发，重新打开应用会始终读取最新提交数据。鉴权信息单独放在 `credentials` 表里，普通渠道配置不混用 Token 字段。
 
 旧版 `config.json` 会在 SQLite 首次初始化且尚无渠道时自动导入。导入成功后，旧 JSON 会被替换为无 Token 的迁移标记，避免明文鉴权同时存在两份。
 
@@ -164,6 +191,10 @@ SQLite 文件权限由应用自动设为 `0600`。
 
 SQLite 让配置和鉴权有事务、外键和独立表结构，但数据库内的 Token 仍是明文。`0600` 权限能限制其他本地用户读取，不能防御同一用户下被入侵的进程。如果之后需要更强隔离，可以继续升级为 Keychain 或 SQLCipher。
 
+### 重置提醒边界
+
+周额度 / 5h 重置提醒基于定时刷新接口返回的 `resetDate` 触发。应用退出、系统休眠或接口刷新失败时不会补发错过的提醒；它不是系统级闹钟。
+
 ## 运行
 
 ```bash
@@ -185,16 +216,19 @@ open build/CodingPlanBar.app
 ```
 CodingPlanBar/
 ├── Package.swift
+├── .github/workflows/ci.yml # macOS 测试与构建 CI
 ├── build-app.sh              # 一键打包 .app
 ├── Resources/Info.plist      # 应用元信息（保留 Dock，可打开管理窗口）
 ├── Scripts/make-icon.swift   # 程序化生成 App 图标
-└── Sources/CodingPlanBar/
+├── Sources/CodingPlanBar/
     ├── Models.swift          # 配置、API 模型、解析
     ├── ConfigDatabase.swift  # SQLite 配置与鉴权存储
     ├── Store.swift           # 状态管理与自动刷新
     ├── PanelView.swift       # SwiftUI 面板（卡片/进度条）
     ├── ManageView.swift      # 桌面渠道管理窗口
     └── main.swift            # 菜单栏图标 + Popover
+└── Tests/CodingPlanBarTests/ # 解析、SQLite 和提醒逻辑测试
+└── Tests/CodingPlanBarTests/ # 解析、SQLite 和提醒逻辑测试
 ```
 
 ## 数据来源
@@ -204,3 +238,7 @@ CodingPlanBar/
 - DeepSeek：`GET https://api.deepseek.com/user/balance`（开放平台 API 余额，不是 Coding Plan）
 
 均为官方只读用量接口，不消耗额度。
+
+## License
+
+MIT License. See [LICENSE](LICENSE).
