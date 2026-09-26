@@ -35,7 +35,7 @@ swift --version
 ## 从源码构建
 
 ```bash
-git clone https://github.com/<owner>/CodingPlanBar.git
+git clone https://github.com/ChinaRedArmy1930/CodingPlanBar.git
 cd CodingPlanBar
 ./build-app.sh
 ```
