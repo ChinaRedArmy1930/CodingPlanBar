@@ -15,9 +15,10 @@
   - 重置时间与倒计时
   - 7 天本地趋势曲线、消耗速率与耗尽预测
   - 低额度系统通知（使用黄色阈值触发）
+  - 周额度 / 5h 窗口重置前系统提醒
   - 自动刷新间隔切换（1/5/10/30 分钟）、立即刷新（⌘R）、退出
 - 正式 **.app 应用**（含图标），可添加到登录项开机自启
-- **管理窗口**：渠道增删改、颜色阈值拖动、菜单栏密度、低额度通知、登录项开关，全部与本地 SQLite 双向同步
+- **管理窗口**：渠道增删改、颜色阈值拖动、菜单栏密度、低额度通知、重置前提醒、登录项开关，全部与本地 SQLite 双向同步
 
 ## 编译打包
 
@@ -130,6 +131,7 @@ sqlite3 ~/.config/coding-plan-bar/coding-plan-bar.sqlite \
 |---|---|---|
 | `menu_bar_mode` | `ring_percent` | `ring_percent` 圆环+百分比；`ring_only` 仅圆环；`percent_only` 仅百分比 |
 | `notifications_enabled` | `true` | 额度从高于黄色阈值降到低于阈值时发送系统通知 |
+| `reset_notifications_enabled` | `true` | 周额度 / 5h 窗口快重置时发送系统提醒；提前量至少 15 分钟，并会大于自动刷新间隔 |
 | `launch_at_login` | `false` | GUI 与系统登录项同步；外部修改配置后应用会自动注册/注销 |
 | `thresholds.green` | `50` | 高于该值显示绿色 |
 | `thresholds.yellow` | `20` | 低于该值显示红色，中间显示黄色 |

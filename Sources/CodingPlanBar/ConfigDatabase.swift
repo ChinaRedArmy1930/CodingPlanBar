@@ -204,6 +204,7 @@ enum ConfigDatabase {
             endpoint: nil,
             menuBarMode: config.menuBarMode,
             notificationsEnabled: config.notificationsEnabled,
+            resetNotificationsEnabled: config.resetNotificationsEnabled,
             launchAtLogin: config.launchAtLogin
         )
     }
@@ -282,6 +283,7 @@ enum ConfigDatabase {
             endpoint: nil,
             menuBarMode: settings["menu_bar_mode"],
             notificationsEnabled: settings["notifications_enabled"].flatMap { $0 == "true" },
+            resetNotificationsEnabled: settings["reset_notifications_enabled"].flatMap { $0 == "true" },
             launchAtLogin: settings["launch_at_login"].flatMap { $0 == "true" }
         )
     }
@@ -307,6 +309,9 @@ enum ConfigDatabase {
         }
         if let notifications = config.notificationsEnabled {
             try upsertSetting(db, key: "notifications_enabled", value: notifications ? "true" : "false", now: now)
+        }
+        if let resetNotifications = config.resetNotificationsEnabled {
+            try upsertSetting(db, key: "reset_notifications_enabled", value: resetNotifications ? "true" : "false", now: now)
         }
         if let launch = config.launchAtLogin {
             try upsertSetting(db, key: "launch_at_login", value: launch ? "true" : "false", now: now)

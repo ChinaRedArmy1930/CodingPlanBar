@@ -259,6 +259,18 @@ struct ManageView: View {
                 }
 
                 HStack(alignment: .center) {
+                    settingLabel("重置前提醒", icon: "clock.badge")
+                    Spacer()
+                    Toggle("", isOn: resetNotificationsBinding)
+                        .labelsHidden()
+                        .controlSize(.small)
+                }
+                Text("覆盖周额度与 5h 窗口；提前至少 15 分钟，并始终大于自动刷新间隔")
+                    .font(.system(size: 9))
+                    .foregroundStyle(.tertiary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                HStack(alignment: .center) {
                     settingLabel("开机启动", icon: "power")
                     Spacer()
                     Toggle("", isOn: launchAtLoginBinding)
@@ -327,6 +339,13 @@ struct ManageView: View {
         Binding(
             get: { store.notificationsEnabled },
             set: { store.setNotificationsEnabled($0) }
+        )
+    }
+
+    private var resetNotificationsBinding: Binding<Bool> {
+        Binding(
+            get: { store.resetNotificationsEnabled },
+            set: { store.setResetNotificationsEnabled($0) }
         )
     }
 

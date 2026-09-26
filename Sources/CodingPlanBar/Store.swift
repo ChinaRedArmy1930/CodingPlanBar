@@ -58,6 +58,7 @@ final class AppStore: ObservableObject {
     @Published private(set) var configError: String?
     @Published private(set) var menuBarMode: MenuBarMode = .ringPercent
     @Published private(set) var notificationsEnabled = true
+    @Published private(set) var resetNotificationsEnabled = true
     @Published private(set) var launchAtLogin = false
     @Published private(set) var histories: [String: [HistoryPoint]] = [:]
     /// GLM 官方消耗趋势（按渠道名索引；失败不覆盖旧数据，趋势区直接隐藏）
@@ -125,6 +126,7 @@ final class AppStore: ObservableObject {
     private func applyDisplaySettings(_ settings: DisplaySettings) {
         menuBarMode = settings.menuBarMode
         notificationsEnabled = settings.notificationsEnabled
+        resetNotificationsEnabled = settings.resetNotificationsEnabled
         launchAtLogin = settings.launchAtLogin
     }
 
@@ -200,6 +202,23 @@ final class AppStore: ObservableObject {
         }
     }
 
+    func setResetNotificationsEnabled(_ enabled: Bool) {
+        guard enabled != resetNotificationsEnabled else { return }
+        do {
+            try updateConfigSetting(key: "reset_notifications_enabled", value: enabled ? "true" : "false")
+            ConfigLoader.displaySettings.resetNotificationsEnabled = enabled
+            resetNotificationsEnabled = enabled
+            if enabled {
+                configureNotifications(force: true)
+            } else {
+                Self.clearResetNotificationState()
+            }
+            objectWillChange.send()
+        } catch {
+            NSLog("[CPB] 保存重置提醒设置失败：\(error)")
+        }
+    }
+
     func setLaunchAtLogin(_ enabled: Bool) throws {
         do {
             if enabled {
@@ -226,7 +245,9 @@ final class AppStore: ObservableObject {
     }
 
     private func configureNotificationsIfNeeded() {
-        if notificationsEnabled { configureNotifications(force: false) }
+        if notificationsEnabled || resetNotificationsEnabled {
+            configureNotifications(force: false)
+        }
     }
 
     private func configureNotifications(force: Bool) {
@@ -361,6 +382,7 @@ final class AppStore: ObservableObject {
             lastRefresh = Date()
             recordHistory(snapshot: snapshot, providerName: providerName)
             evaluateLowQuotaNotifications(snapshot: snapshot, providerName: providerName)
+            evaluateResetNotifications(snapshot: snapshot, providerName: providerName)
         }
         notifyStateChange()
     }
@@ -467,6 +489,84 @@ final class AppStore: ObservableObject {
         UNUserNotificationCenter.current().add(request)
     }
 
+    // MARK: - 重置前提醒
+
+    /// 提前量必须大于刷新间隔，否则 30 分钟刷新档可能在两次刷新之间错过提醒窗口。
+    private var resetNotificationLeadTime: TimeInterval {
+        max(15 * 60, refreshInterval + 2 * 60)
+    }
+
+    /// 判断当前重置窗口是否应该发提醒；同一次 resetDate 只发一次。
+    static func shouldSendResetNotification(
+        remaining: TimeInterval,
+        lastNotifiedReset: Date?,
+        resetDate: Date,
+        leadTime: TimeInterval
+    ) -> Bool {
+        guard remaining > 0, remaining <= leadTime else { return false }
+        guard leadTime > 0 else { return false }
+        return lastNotifiedReset != resetDate
+    }
+
+    private static func isResetNotificationMetric(_ metric: ProviderSnapshot.Metric) -> Bool {
+        metric.label.contains("周额度") || metric.label.contains("5h")
+    }
+
+    private static func resetNotificationDefaultsKey(providerName: String, metricLabel: String) -> String {
+        "reset-notification.\(providerName)\u{001F}\(metricLabel)"
+    }
+
+    /// 关闭重置提醒时清掉“本窗口已提醒”的持久化状态，避免重新开启后错过当前窗口。
+    private static func clearResetNotificationState() {
+        let defaults = UserDefaults.standard
+        for key in defaults.dictionaryRepresentation().keys where key.hasPrefix("reset-notification.") {
+            defaults.removeObject(forKey: key)
+        }
+    }
+
+    private func evaluateResetNotifications(snapshot: ProviderSnapshot, providerName: String) {
+        guard resetNotificationsEnabled else { return }
+        for metric in snapshot.metrics {
+            guard Self.isResetNotificationMetric(metric),
+                  let resetDate = metric.resetDate else { continue }
+
+            let remaining = resetDate.timeIntervalSinceNow
+            let defaultsKey = Self.resetNotificationDefaultsKey(providerName: providerName, metricLabel: metric.label)
+
+            if remaining <= 0 {
+                UserDefaults.standard.removeObject(forKey: defaultsKey)
+                continue
+            }
+            // 同一 provider/metric/resetDate 只提醒一次；resetDate 变化后进入新窗口会再次提醒。
+            let lastNotifiedReset = UserDefaults.standard.object(forKey: defaultsKey) as? Date
+            guard Self.shouldSendResetNotification(
+                remaining: remaining,
+                lastNotifiedReset: lastNotifiedReset,
+                resetDate: resetDate,
+                leadTime: resetNotificationLeadTime
+            ) else { continue }
+            sendResetNotification(providerName: providerName, metric: metric, resetDate: resetDate)
+            UserDefaults.standard.set(resetDate, forKey: defaultsKey)
+        }
+    }
+
+    private func sendResetNotification(providerName: String, metric: ProviderSnapshot.Metric, resetDate: Date) {
+        let remainingMinutes = Int((max(0, resetDate.timeIntervalSinceNow) / 60).rounded(.up))
+        let metricName = metric.label.replacingOccurrences(of: "剩余", with: "")
+        let content = UNMutableNotificationContent()
+        content.title = "\(providerName) \(metricName)即将重置"
+        content.body = "约 \(remainingMinutes) 分钟后重置，重置后额度会恢复。当前剩余 \(metric.valueText)。"
+        content.sound = .default
+        content.threadIdentifier = providerName
+        let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 1, repeats: false)
+        let request = UNNotificationRequest(
+            identifier: "reset-\(providerName)-\(metric.label)-\(Int(resetDate.timeIntervalSince1970))",
+            content: content,
+            trigger: trigger
+        )
+        UNUserNotificationCenter.current().add(request)
+    }
+
     // MARK: 配置管理（管理界面）
 
     /// 从 SQLite 读取可编辑草稿。读取失败必须向上抛出，调用方绝不能再基于空列表保存。
@@ -544,6 +644,7 @@ final class AppStore: ObservableObject {
             endpoint: nil,
             menuBarMode: menuBarMode.rawValue,
             notificationsEnabled: notificationsEnabled,
+            resetNotificationsEnabled: resetNotificationsEnabled,
             launchAtLogin: launchAtLogin
         )
         try ConfigDatabase.saveConfig(config)

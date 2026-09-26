@@ -58,6 +58,7 @@ struct FileConfig: Decodable {
     let endpoint: String?
     let menuBarMode: String?
     let notificationsEnabled: Bool?
+    let resetNotificationsEnabled: Bool?
     let launchAtLogin: Bool?
 
     enum CodingKeys: String, CodingKey {
@@ -65,6 +66,7 @@ struct FileConfig: Decodable {
         case baseURL = "base_url"
         case menuBarMode = "menu_bar_mode"
         case notificationsEnabled = "notifications_enabled"
+        case resetNotificationsEnabled = "reset_notifications_enabled"
         case launchAtLogin = "launch_at_login"
     }
 }
@@ -92,6 +94,7 @@ enum ConfigResult {
 struct DisplaySettings {
     var menuBarMode: MenuBarMode = .ringPercent
     var notificationsEnabled = true
+    var resetNotificationsEnabled = true
     var launchAtLogin = false
 }
 
@@ -499,6 +502,7 @@ enum ConfigLoader {
         displaySettings = DisplaySettings(
             menuBarMode: MenuBarMode(rawValue: cfg.menuBarMode ?? "") ?? .ringPercent,
             notificationsEnabled: cfg.notificationsEnabled ?? true,
+            resetNotificationsEnabled: cfg.resetNotificationsEnabled ?? true,
             launchAtLogin: cfg.launchAtLogin ?? false
         )
 
